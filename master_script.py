@@ -1,8 +1,23 @@
 import pandas as pd
 import sys
 import warnings
+from sqlalchemy import create_engine
 
 warnings.filterwarnings('ignore')
+
+def salva_su_database(df, nome_tabella):
+    print(f"Tentativo di connessione al database per la tabella '{nome_tabella}'...")
+    try:
+        # STRINGA DI CONNESSIONE: postgresql://utente:password@host:porta/nome_database
+        # Inserisci la tua password al posto di TUA_PASSWORD_QUI
+        stringa_connessione = 'postgresql://postgres:sportanalytics@localhost:5432/sports_analytics'
+        engine = create_engine(stringa_connessione)
+        
+        # Scrive il dataframe su SQL. if_exists='replace' sovrascrive la tabella se esiste già
+        df.to_sql(nome_tabella, engine, if_exists='replace', index=False)
+        print(f"✅ SUCCESSO! {len(df)} righe salvate in PostgreSQL nella tabella '{nome_tabella}'.")
+    except Exception as e:
+        print(f"❌ Errore durante il salvataggio: {e}")
 
 def menu_principale():
     print("\n" + "="*50)
@@ -25,14 +40,17 @@ def modulo_statsbomb():
     print("\n>>> Avvio Modulo StatsBomb...")
     from statsbombpy import sb
     
-    # Per ora estraiamo i dati di una partita fissa, 
-    # poi aggiungeremo l'opzione per scegliere la lega/stagione.
     print("Estrazione Finale Mondiali 2022...")
     df_eventi = sb.events(match_id=3869685)
     print(f"✅ Estratti {len(df_eventi)} eventi.")
     
-    # Questa è la funzione che creeremo nel prossimo step!
-    # salva_su_database(df_eventi, nome_tabella="statsbomb_eventi_prova")
+    # PULIZIA DATI BASE (SQL non ama liste o dizionari annidati nelle celle)
+    # Convertiamo tutte le colonne complesse in stringhe per evitare errori
+    for colonna in df_eventi.columns:
+        if df_eventi[colonna].apply(type).eq(list).any() or df_eventi[colonna].apply(type).eq(dict).any():
+            df_eventi[colonna] = df_eventi[colonna].astype(str)
+
+    salva_su_database(df_eventi, nome_tabella="statsbomb_eventi_mondiale")
 
 def modulo_fbref():
     print("\n>>> Avvio Modulo FBref (SoccerData)...")
@@ -41,9 +59,14 @@ def modulo_fbref():
     print("Scaricamento classifica Serie A...")
     fbref = sd.FBref(leagues="ITA-Serie A", seasons="2324")
     df_classifica = fbref.read_team_season_stats()
-    print("✅ Dati estratti.")
     
-    # salva_su_database(df_classifica, nome_tabella="fbref_classifica_prova")
+    # Soccerdata crea indici complessi, li resettiamo per renderli compatibili con SQL
+    df_classifica = df_classifica.reset_index()
+    # Rinominiamo le colonne per eliminare gli spazi vuoti o caratteri strani
+    df_classifica.columns = ['_'.join(col).strip() if isinstance(col, tuple) else str(col) for col in df_classifica.columns]
+    
+    print("✅ Dati estratti e puliti.")
+    salva_su_database(df_classifica, nome_tabella="fbref_classifica_seriea")
 
 def main():
     while True:
