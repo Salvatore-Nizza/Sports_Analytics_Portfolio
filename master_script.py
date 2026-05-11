@@ -2,18 +2,24 @@ import pandas as pd # type: ignore
 import sys
 import warnings
 from sqlalchemy import create_engine # type: ignore
+import os
+from dotenv import load_dotenv
 
 warnings.filterwarnings('ignore')
 
 def salva_su_database(df, nome_tabella):
     print(f"Tentativo di connessione al database per la tabella '{nome_tabella}'...")
     try:
-        # STRINGA DI CONNESSIONE: postgresql://utente:password@host:porta/nome_database
-        # Inserisci la tua password al posto di TUA_PASSWORD_QUI
-        stringa_connessione = 'postgresql://postgres:sportanalytics@localhost:5432/sports_analytics'
-        engine = create_engine(stringa_connessione)
+        # 1. Carica il file nascosto .env
+        load_dotenv()
         
-        # Scrive il dataframe su SQL. if_exists='replace' sovrascrive la tabella se esiste già
+        # 2. Estrae la password salvata nella variabile DB_PASSWORD
+        password_segreta = os.getenv("DB_PASSWORD")
+        
+        # 3. Inserisce la password dinamicamente (nota la 'f' prima delle virgolette)
+        stringa_connessione = f'postgresql://postgres:{password_segreta}@localhost:5432/sports_analytics'
+        
+        engine = create_engine(stringa_connessione)
         df.to_sql(nome_tabella, engine, if_exists='replace', index=False)
         print(f"✅ SUCCESSO! {len(df)} righe salvate in PostgreSQL nella tabella '{nome_tabella}'.")
     except Exception as e:
