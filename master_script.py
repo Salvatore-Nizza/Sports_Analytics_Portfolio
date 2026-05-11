@@ -1,7 +1,7 @@
-import pandas as pd
+import pandas as pd # type: ignore
 import sys
 import warnings
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine # type: ignore
 
 warnings.filterwarnings('ignore')
 
@@ -38,7 +38,7 @@ def menu_principale():
 
 def modulo_statsbomb():
     print("\n>>> Avvio Modulo StatsBomb...")
-    from statsbombpy import sb
+    from statsbombpy import sb # type: ignore
     
     print("Estrazione Finale Mondiali 2022...")
     df_eventi = sb.events(match_id=3869685)
@@ -54,7 +54,7 @@ def modulo_statsbomb():
 
 def modulo_fbref():
     print("\n>>> Avvio Modulo FBref (SoccerData)...")
-    import soccerdata as sd
+    import soccerdata as sd # type: ignore
     
     print("Scaricamento classifica Serie A...")
     fbref = sd.FBref(leagues="ITA-Serie A", seasons="2324")
