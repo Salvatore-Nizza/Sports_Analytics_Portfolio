@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, inspect
 from statsbombpy import sb
 import soccerdata as sd
 import warnings
+from moduli_analisi.fase1_giocatori import crea_scheda_atleta
 
 # Nascondiamo i warning di soccerdata
 warnings.filterwarnings('ignore')
@@ -259,6 +260,8 @@ elif modalita == "📂 Esplora Database":
             st.dataframe(df, width="stretch")
             
         with tab_giocatori:
-            st.info("L'infrastruttura dati è pronta. In attesa della Fase 1 (Grafici).")
+            # Passiamo il dataframe appena caricato dal DB al nostro modulo
+            crea_scheda_atleta(df)
+
         with tab_squadra:
             st.info("In attesa della Fase 2.")
