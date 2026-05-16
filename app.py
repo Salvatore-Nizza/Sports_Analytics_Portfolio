@@ -13,35 +13,26 @@ warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="Sports Analytics Hub", layout="wide", page_icon="⚽")
 
-# ==========================================
-# --- 1. DATA ENGINE (DUAL SAVE SYSTEM) ---
-# ==========================================
 @st.cache_resource
 def connect_database():
     load_dotenv()
     target = os.getenv("DB_TARGET", "SQLITE")
     
-    # 1. Always prepare the SQLite connection (Portable SSD)
     project_folder = os.path.dirname(os.path.abspath(__file__))
     clean_path = os.path.join(project_folder, "sports_analytics.db").replace("\\", "/")
     engine_sqlite = create_engine(f"sqlite:///{clean_path}")
     
-    # 2. Database Routing
     if target == "POSTGRESQL":
-        # Desktop Mode: Postgres is Primary, SQLite is Mirror
         db_password = os.getenv("DB_PASSWORD")
         engine_pg = create_engine(f"postgresql://postgres:{db_password}@localhost:5432/sports_analytics")
         return engine_pg, engine_sqlite 
     else:
-        # Portable Mode: Only SQLite
         return engine_sqlite, None
 
 engine_primary, engine_mirror = connect_database()
 
 def save_data_to_db(df, table_name):
-    """Saves data to Primary DB and Mirrors it to SQLite if available"""
     df.to_sql(table_name, engine_primary, if_exists='replace', index=False)
-    
     if engine_mirror is not None:
         df.to_sql(table_name, engine_mirror, if_exists='replace', index=False)
         return f"✅ Sync Complete: Data saved to PostgreSQL & mirrored to SQLite ({table_name})"
@@ -64,9 +55,6 @@ def get_competitions():
 def get_matches(comp_id, season_id):
     return sb.matches(competition_id=comp_id, season_id=season_id)
 
-# ==========================================
-# --- SIDEBAR: MAIN NAVIGATION ---
-# ==========================================
 st.sidebar.title("⚙️ Main Navigation")
 
 if engine_mirror is not None:
@@ -80,28 +68,19 @@ app_mode = st.sidebar.radio(
 )
 st.sidebar.markdown("---")
 
-# ==========================================
-# MODE 1: DOWNLOAD NEW DATA
-# ==========================================
 if app_mode == "📥 Download New Data":
     st.title("📥 Data Download Center")
-    
     provider = st.selectbox("🌐 Select Data Provider:", ["StatsBomb (Detailed Event Data)", "FBref (Aggregate Stats & Fixtures)"])
     st.markdown("---")
     
-    # ----------------------------------
-    # STATSBOMB FLOW
-    # ----------------------------------
     if provider == "StatsBomb (Detailed Event Data)":
         st.subheader("StatsBomb Navigator")
         comps_df = get_competitions()
-        
         col1, col2 = st.columns(2)
         with col1:
             comp_name = st.selectbox("🏆 Competition:", comps_df['competition_name'].unique().tolist())
             filtered_comp = comps_df[comps_df['competition_name'] == comp_name]
             comp_id = filtered_comp['competition_id'].iloc[0]
-            
         with col2:
             season_name = st.selectbox("📅 Season:", filtered_comp['season_name'].unique().tolist())
             season_id = filtered_comp[filtered_comp['season_name'] == season_name]['season_id'].iloc[0]
@@ -111,12 +90,10 @@ if app_mode == "📥 Download New Data":
         if not matches_df.empty:
             st.markdown("### Download Mode")
             tab_single, tab_season = st.tabs(["⚽ Single Match", "🏆 Full Season Bulk"])
-            
             with tab_single:
                 matches_df['match_label'] = matches_df['match_date'] + " | " + matches_df['home_team'] + " vs " + matches_df['away_team']
                 match_dict = dict(zip(matches_df['match_label'], matches_df['match_id']))
                 selected_match = st.selectbox("Select Match:", list(match_dict.keys()))
-                
                 if st.button("🚀 Download Match", type="primary"):
                     match_id_sel = match_dict[selected_match]
                     with st.spinner('Extracting events...'):
@@ -124,7 +101,6 @@ if app_mode == "📥 Download New Data":
                         for c in events_df.columns:
                             if events_df[c].apply(type).eq(dict).any() or events_df[c].apply(type).eq(list).any():
                                 events_df[c] = events_df[c].astype(str)
-                        
                         table_name = f"statsbomb__{format_db_name(comp_name)}__{format_db_name(season_name)}__match_{match_id_sel}"
                         success_msg = save_data_to_db(events_df, table_name)
                     st.success(success_msg)
@@ -136,7 +112,6 @@ if app_mode == "📥 Download New Data":
                     status_text = st.empty()
                     df_list = []
                     total_matches = len(matches_df)
-                    
                     for i, row in matches_df.iterrows():
                         m_id = row['match_id']
                         status_text.text(f"Downloading match {i+1} of {total_matches}: {row['home_team']} vs {row['away_team']}...")
@@ -149,7 +124,6 @@ if app_mode == "📥 Download New Data":
                         except:
                             pass
                         progress_bar.progress((i + 1) / total_matches)
-                    
                     if df_list:
                         status_text.text("Merging and saving to database...")
                         full_season_df = pd.concat(df_list, ignore_index=True)
@@ -157,17 +131,13 @@ if app_mode == "📥 Download New Data":
                         success_msg = save_data_to_db(full_season_df, season_table_name)
                         st.success(success_msg)
                         st.balloons()
-    
-    # ----------------------------------
-    # FBREF FLOW
-    # ----------------------------------
+                        
     elif provider == "FBref (Aggregate Stats & Fixtures)":
         st.subheader("FBref Navigator")
         fbref_leagues = {
             "Serie A": "ITA-Serie A", "Premier League": "ENG-Premier League", 
             "La Liga": "ESP-La Liga", "Bundesliga": "GER-Bundesliga", "Ligue 1": "FRA-Ligue 1"
         }
-        
         col1, col2 = st.columns(2)
         with col1:
             league_choice = st.selectbox("🏆 League:", list(fbref_leagues.keys()))
@@ -175,11 +145,9 @@ if app_mode == "📥 Download New Data":
             start_year = st.number_input("📅 Start Year (e.g., 2023 for 23/24):", min_value=2010, max_value=2025, value=2023)
             
         data_type = st.radio("What to download?", ["Team Stats", "Fixtures & Results"])
-        
         if st.button("🚀 Download from FBref", type="primary"):
             season_fmt = f"{start_year}/{str(start_year+1)[-2:]}"
             league_code = fbref_leagues[league_choice]
-            
             with st.spinner("Connecting to FBref..."):
                 try:
                     fbref_api = sd.FBref(leagues=league_code, seasons=season_fmt)
@@ -189,7 +157,6 @@ if app_mode == "📥 Download New Data":
                     else:
                         df = fbref_api.read_schedule()
                         detail = "fixtures"
-                        
                     df = df.reset_index()
                     df.columns = ['_'.join(col).strip() if isinstance(col, tuple) else str(col) for col in df.columns]
                     table_name = f"fbref__{format_db_name(league_choice)}__{start_year}_{start_year+1}__{detail}"
@@ -198,13 +165,9 @@ if app_mode == "📥 Download New Data":
                 except Exception as e:
                     st.error(f"Error: {e}")
 
-# ==========================================
-# MODE 2: EXPLORE DATABASE
-# ==========================================
 elif app_mode == "📂 Explore Database":
     st.title("📁 Sports Database Explorer")
     
-    # IMPORT THE MODULE FOR PHASE 1
     from moduli_analisi.fase1_giocatori import create_player_profile
     
     inspector = inspect(engine_primary)
@@ -238,7 +201,6 @@ elif app_mode == "📂 Explore Database":
 
         tab_raw, tab_player, tab_team = st.tabs(["📊 Raw Data", "👤 Player Profile", "🏟️ Team Analysis"])
         
-        # Load Data once to use across tabs
         query = f"SELECT * FROM {final_table_name}"
         df = pd.read_sql(query, engine_primary)
         
@@ -248,7 +210,6 @@ elif app_mode == "📂 Explore Database":
             st.dataframe(df, width="stretch")
             
         with tab_player:
-            # We call our English translated Phase 1 module
             create_player_profile(df, src_choice)
             
         with tab_team:
