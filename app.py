@@ -13,42 +13,51 @@ warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="Hub Analisi Sportiva", layout="wide", page_icon="⚽")
 
-# --- 1. FUNZIONI DI BASE E CONNESSIONE INTELLIGENTE ---
+# ==========================================
+# --- 1. MOTORE DATI (IL DOPPIO BINARIO) ---
+# ==========================================
 @st.cache_resource
-def connetti_db():
+def connetti_database():
     load_dotenv()
-    target_database = os.getenv("DB_TARGET", "SQLITE")
+    target = os.getenv("DB_TARGET", "SQLITE")
     
-    if target_database == "POSTGRESQL":
-        # Configurazione per il PC Fisso
+    # 1. Prepariamo SEMPRE la connessione SQLite (Il nostro fedele SSD)
+    cartella_progetto = os.path.dirname(os.path.abspath(__file__))
+    percorso_pulito = os.path.join(cartella_progetto, "sports_analytics.db").replace("\\", "/")
+    engine_sqlite = create_engine(f"sqlite:///{percorso_pulito}")
+    
+    # 2. Creiamo il "Bivio"
+    if target == "POSTGRESQL":
+        # Siamo sul FISSO: Il Primario è Postgres, il Mirror (Copia) è SQLite
         db_password = os.getenv("DB_PASSWORD")
-        db_url = f"postgresql://postgres:{db_password}@localhost:5432/sports_analytics"
+        engine_pg = create_engine(f"postgresql://postgres:{db_password}@localhost:5432/sports_analytics")
+        return engine_pg, engine_sqlite 
     else:
-        # --- TRUCCO PER L'HARD DISK ESTERNO ---
-        # Trova il percorso assoluto della cartella in cui si trova questo file app.py
-        cartella_progetto = os.path.dirname(os.path.abspath(__file__))
-        
-        # Unisce la cartella al nome del file del database
-        percorso_completo_db = os.path.join(cartella_progetto, "sports_analytics.db")
-        
-        # Sostituisce i backslash di Windows (\) con gli slash (/) richiesti da SQLite
-        percorso_pulito = percorso_completo_db.replace("\\", "/")
-        
-        db_url = f"sqlite:///{percorso_pulito}"
-        
-    return create_engine(db_url)
+        # Siamo sul PORTATILE: Esiste solo SQLite
+        return engine_sqlite, None
+
+# Estraiamo i due motori (Se engine_mirror è None, siamo in viaggio)
+engine_primario, engine_mirror = connetti_database()
+
+def salva_dati_nel_db(df, nome_tabella):
+    """Funzione intelligente che salva su 1 o 2 database a seconda di dove ci troviamo"""
+    # 1. Salva sul database principale (Postgres o SQLite)
+    df.to_sql(nome_tabella, engine_primario, if_exists='replace', index=False)
+    
+    # 2. Se c'è un mirror (cioè se siamo sul fisso), salva la copia sull'SSD
+    if engine_mirror is not None:
+        df.to_sql(nome_tabella, engine_mirror, if_exists='replace', index=False)
+        return f"✅ Sincronizzazione perfetta: Dati salvati su PostgreSQL e copiati su SQLite ({nome_tabella})"
+    else:
+        return f"✅ Salvataggio offline: Dati salvati localmente sull'SSD ({nome_tabella})"
 
 def formatta_nome_db(testo):
-    """Pulisce i nomi per SQL: minuscolo e spazi sostituiti da underscore"""
     testo = str(testo).lower()
     testo = re.sub(r'[^a-z0-9\s]', '', testo)
     return re.sub(r'\s+', '_', testo)
 
 def formatta_nome_visuale(testo):
-    """Fa il contrario: trasforma 'champions_league' in 'Champions League' per i menu"""
     return str(testo).replace("_", " ").title()
-
-engine = connetti_db()
 
 @st.cache_data
 def ottieni_competizioni():
@@ -62,6 +71,13 @@ def ottieni_partite(comp_id, season_id):
 # --- BARRA LATERALE: NAVIGAZIONE ---
 # ==========================================
 st.sidebar.title("⚙️ Navigazione Principale")
+
+# Un piccolo badge per ricordarci su quale database stiamo lavorando
+if engine_mirror is not None:
+    st.sidebar.success("🟢 Modalità Fisso: Sincronizzazione Attiva")
+else:
+    st.sidebar.warning("🟡 Modalità Portatile: Solo SSD Esterno")
+
 modalita = st.sidebar.radio(
     "Cosa vuoi fare?", 
     ["📂 Esplora Database", "📥 Scarica Nuovi Dati"]
@@ -74,7 +90,6 @@ st.sidebar.markdown("---")
 if modalita == "📥 Scarica Nuovi Dati":
     st.title("📥 Centro Download Dati")
     
-    # SCELTA DEL DATABASE
     fornitore = st.selectbox("🌐 Scegli il Fornitore Dati:", ["StatsBomb (Dati Evento Dettagliati)", "FBref (Statistiche Aggregate e Calendari)"])
     st.markdown("---")
     
@@ -101,7 +116,6 @@ if modalita == "📥 Scarica Nuovi Dati":
             st.markdown("### Modalità di Download")
             tab_singola, tab_stagione = st.tabs(["⚽ Scarica Singola Partita", "🏆 Scarica INTERA Stagione"])
             
-            # TAB 1: SINGOLA PARTITA
             with tab_singola:
                 partite_df['match_label'] = partite_df['match_date'] + " | " + partite_df['home_team'] + " vs " + partite_df['away_team']
                 diz_partite = dict(zip(partite_df['match_label'], partite_df['match_id']))
@@ -111,22 +125,22 @@ if modalita == "📥 Scarica Nuovi Dati":
                     match_id_sel = diz_partite[scelta_partita]
                     with st.spinner('Estrazione in corso...'):
                         df_eventi = sb.events(match_id=match_id_sel)
-                        # Pulizia colonne complesse
                         for c in df_eventi.columns:
                             if df_eventi[c].apply(type).eq(dict).any() or df_eventi[c].apply(type).eq(list).any():
                                 df_eventi[c] = df_eventi[c].astype(str)
                         
                         nome_tab = f"statsbomb__{formatta_nome_db(scelta_comp_nome)}__{formatta_nome_db(scelta_stag_nome)}__partita_{match_id_sel}"
-                        df_eventi.to_sql(nome_tab, engine, if_exists='replace', index=False)
-                    st.success(f"Partita salvata: {nome_tab}")
+                        
+                        # USIAMO LA NOSTRA NUOVA FUNZIONE MAGICA
+                        messaggio_successo = salva_dati_nel_db(df_eventi, nome_tab)
+                        
+                    st.success(messaggio_successo)
             
-            # TAB 2: INTERA STAGIONE (BULK DOWNLOAD)
             with tab_stagione:
                 st.info(f"Stai per scaricare tutte le {len(partite_df)} partite della stagione. Potrebbe volerci qualche minuto.")
                 if st.button("⚡ Scarica TUTTA LA STAGIONE (Lungo)", type="primary"):
                     progress_bar = st.progress(0)
                     testo_stato = st.empty()
-                    
                     lista_dataframe = []
                     totale = len(partite_df)
                     
@@ -135,22 +149,23 @@ if modalita == "📥 Scarica Nuovi Dati":
                         testo_stato.text(f"Scaricamento partita {i+1} di {totale}: {riga['home_team']} vs {riga['away_team']}...")
                         try:
                             df_ev = sb.events(match_id=m_id)
-                            # Pulizia colonne
                             for c in df_ev.columns:
                                 if df_ev[c].apply(type).eq(dict).any() or df_ev[c].apply(type).eq(list).any():
                                     df_ev[c] = df_ev[c].astype(str)
                             lista_dataframe.append(df_ev)
                         except:
-                            pass # Salta se c'è un errore su una singola partita
-                        
+                            pass
                         progress_bar.progress((i + 1) / totale)
                     
                     if lista_dataframe:
                         testo_stato.text("Unione dei dati e salvataggio nel database...")
                         df_completo = pd.concat(lista_dataframe, ignore_index=True)
                         nome_tab_stagione = f"statsbomb__{formatta_nome_db(scelta_comp_nome)}__{formatta_nome_db(scelta_stag_nome)}__stagione_completa"
-                        df_completo.to_sql(nome_tab_stagione, engine, if_exists='replace', index=False)
-                        st.success(f"✅ Download stagionale completato! Salvate {len(df_completo)} righe in: {nome_tab_stagione}")
+                        
+                        # USIAMO LA NOSTRA NUOVA FUNZIONE MAGICA
+                        messaggio_successo = salva_dati_nel_db(df_completo, nome_tab_stagione)
+                        
+                        st.success(messaggio_successo)
                         st.balloons()
     
     # ----------------------------------
@@ -185,13 +200,15 @@ if modalita == "📥 Scarica Nuovi Dati":
                         df = fbref_api.read_schedule()
                         dettaglio = "calendario"
                         
-                    # Pulizia colonne
                     df = df.reset_index()
                     df.columns = ['_'.join(col).strip() if isinstance(col, tuple) else str(col) for col in df.columns]
                     
                     nome_tab = f"fbref__{formatta_nome_db(scelta_lega)}__{anno}_{anno+1}__{dettaglio}"
-                    df.to_sql(nome_tab, engine, if_exists='replace', index=False)
-                    st.success(f"✅ Dati FBref salvati in: {nome_tab}")
+                    
+                    # USIAMO LA NOSTRA NUOVA FUNZIONE MAGICA
+                    messaggio_successo = salva_dati_nel_db(df, nome_tab)
+                    st.success(messaggio_successo)
+                    
                 except Exception as e:
                     st.error(f"Errore: {e}")
 
@@ -201,7 +218,8 @@ if modalita == "📥 Scarica Nuovi Dati":
 elif modalita == "📂 Esplora Database":
     st.title("📁 Esploratore Database Sportivo")
     
-    inspector = inspect(engine)
+    # QUI L'APP LEGGERÀ SEMPRE DAL MOTORE PIÙ POTENTE A DISPOSIZIONE (engine_primario)
+    inspector = inspect(engine_primario)
     tabelle_disponibili = inspector.get_table_names()
     
     albero_db = {}
@@ -210,10 +228,9 @@ elif modalita == "📂 Esplora Database":
         if "__" in tab:
             parti = tab.split("__")
             if len(parti) >= 4:
-                # Applichiamo la formattazione visiva "bella" (da statsbomb a Statsbomb, ecc.)
                 fonte = formatta_nome_visuale(parti[0])
                 comp = formatta_nome_visuale(parti[1])
-                stag = formatta_nome_visuale(parti[2]).replace(" ", "/") # Per mostrare 2023/2024
+                stag = formatta_nome_visuale(parti[2]).replace(" ", "/")
                 dettaglio = formatta_nome_visuale(parti[3])
                 
                 if fonte not in albero_db: albero_db[fonte] = {}
@@ -222,11 +239,9 @@ elif modalita == "📂 Esplora Database":
                 albero_db[fonte][comp][stag][dettaglio] = tab
 
     if not albero_db:
-        st.warning("Nessuna tabella strutturata trovata. (Ricorda di cancellare le vecchie tabelle da DBeaver!)")
+        st.warning("Nessuna tabella trovata. Vai a 'Scarica Nuovi Dati' per iniziare!")
     else:
         st.sidebar.subheader("I tuoi Dati")
-        
-        # MENU A CASCATA (Visivamente pulito)
         scelta_fonte = st.sidebar.selectbox("📂 Fonte Dati", list(albero_db.keys()))
         scelta_comp = st.sidebar.selectbox("🏆 Competizione", list(albero_db[scelta_fonte].keys()))
         scelta_stag = st.sidebar.selectbox("📅 Stagione", list(albero_db[scelta_fonte][scelta_comp].keys()))
@@ -237,13 +252,13 @@ elif modalita == "📂 Esplora Database":
         tab_raw, tab_giocatori, tab_squadra = st.tabs(["📊 Dati Grezzi", "👤 Scheda Atleta", "🏟️ Analisi Squadra"])
         
         with tab_raw:
-            st.caption(f"Tabella tecnica nel DB: `{tabella_selezionata_finale}`")
+            st.caption(f"Tabella in lettura: `{tabella_selezionata_finale}`")
             query = f"SELECT * FROM {tabella_selezionata_finale}"
-            df = pd.read_sql(query, engine)
+            df = pd.read_sql(query, engine_primario)
             st.write(f"Record totali: **{len(df)}**")
             st.dataframe(df, width="stretch")
             
         with tab_giocatori:
-            st.info("In attesa della Fase 1")
+            st.info("L'infrastruttura dati è pronta. In attesa della Fase 1 (Grafici).")
         with tab_squadra:
-            st.info("In attesa della Fase 2")
+            st.info("In attesa della Fase 2.")
