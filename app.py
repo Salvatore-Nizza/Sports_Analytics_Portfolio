@@ -165,9 +165,14 @@ if app_mode == "📥 Download New Data":
                 except Exception as e:
                     st.error(f"Error: {e}")
 
+# ==========================================
+# MODE 2: EXPLORE DATABASE
+# ==========================================
 elif app_mode == "📂 Explore Database":
     st.title("📁 Sports Database Explorer")
     
+    # IMPORT THE ANALYSIS MODULES
+    from moduli_analisi.fase0_eda import create_eda_profile
     from moduli_analisi.fase1_giocatori import create_player_profile
     
     inspector = inspect(engine_primary)
@@ -199,18 +204,18 @@ elif app_mode == "📂 Explore Database":
         
         final_table_name = db_tree[src_choice][comp_choice][season_choice][detail_choice]
 
-        tab_raw, tab_player, tab_team = st.tabs(["📊 Raw Data", "👤 Player Profile", "🏟️ Team Analysis"])
+        # RENAMED THE FIRST TAB TO "EDA & Raw Data"
+        tab_eda, tab_player, tab_team = st.tabs(["🔍 EDA & Raw Data", "👤 Player Profile", "🏟️ Team Analysis"])
         
         query = f"SELECT * FROM {final_table_name}"
         df = pd.read_sql(query, engine_primary)
         
-        with tab_raw:
-            st.caption(f"SQL Table: `{final_table_name}`")
-            st.write(f"Total Records: **{len(df)}**")
-            st.dataframe(df, width="stretch")
+        with tab_eda:
+            # Call the new EDA module
+            create_eda_profile(df, final_table_name)
             
         with tab_player:
             create_player_profile(df, src_choice)
             
         with tab_team:
-            st.info("Awaiting Phase 2 (Team Analysis & Heatmaps).")
+            st.info("Awaiting Phase 2 (Team Analysis, xG Models & Heatmaps from the Course!).")
