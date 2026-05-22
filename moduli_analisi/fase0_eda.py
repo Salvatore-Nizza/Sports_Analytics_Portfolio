@@ -5,6 +5,7 @@ import plotly.express as px
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import LocalOutlierFactor
 from scipy import stats
+import plotly.graph_objects as go
 
 def create_eda_profile(df, table_name):
     st.subheader("🔍 Exploratory Data Analysis (EDA)")
@@ -161,32 +162,42 @@ def create_eda_profile(df, table_name):
             df_plot['Outlier'] = outliers_mask.map({True: 'Outlier', False: 'Normal'})
             
             if outlier_action == "Highlight Only":
-                # Create a Boxplot with outliers highlighted in Red
-                fig_out = px.box(
-                    df_plot, 
-                    y=outlier_feature, 
-                    color='Outlier',
-                    color_discrete_map={"Outlier": "red", "Normal": "#00B4D8"},
-                    title=f"Boxplot Highlighting Outliers for {outlier_feature}"
+                # --- NUOVA STRATEGIA: BOXPLOT NATIVO STANDARD + SOVRAPPOSIZIONE CUSTOM ---
+                fig_out = go.Figure()
+
+                # Livello 1: Boxplot NATIVO STANDARD
+                # Mostra solo i baffi nativi e i punti nativi (standard di Tukey), senza i punti della scatola
+                fig_out.add_trace(go.Box(
+                    y=df_plot[outlier_feature],
+                    name="Distribuzione Generale",
+                    boxpoints='outliers', # Fondamentale: mostra solo gli outlier nativi outside standard whiskers
+                    # marker_color: colore della scatola e median
+                    marker_color='#00B4D8',
+                    line_color='#0077B6'
+                ))
+
+                # Filtriamo i tuoi specifici outlier calcolati
+                outliers_df = df_plot[df_plot['Outlier'] == 'Outlier']
+
+                # Livello 2: Sovrapponiamo i TUOI OUTLIER SPECIFICI (colorati in rosso)
+                if not outliers_df.empty:
+                    fig_out.add_trace(go.Scatter(
+                        x=["Distribuzione Generale"] * len(outliers_df), # Stessa X per allineamento
+                        y=outliers_df[outlier_feature],
+                        mode='markers',
+                        marker=dict(color='red', size=8, line=dict(width=1, color='darkred')),
+                        name='I tuoi Outliers'
+                    ))
+
+                # Miglioriamo il layout generale
+                fig_out.update_layout(
+                    title=f"Boxplot con Outliers Sovrapposti (Baffi Standard): {outlier_feature}",
+                    yaxis_title=outlier_feature,
+                    showlegend=True,
+                    template="plotly_dark"
                 )
-                # Rename the legend title from 'color' to 'Outlier'
-                fig_out.update_layout(legend_title_text='Outlier')
+                
                 st.plotly_chart(fig_out, use_container_width=True)
-                
-            elif outlier_action == "Remove Outliers (Clean Dataset)":
-                df_clean = df_plot[~outliers_mask]
-                st.success(f"✅ Outliers removed. New dataset shape: {df_clean.shape}")
-                
-                # Show cleaned Boxplot
-                fig_compare = px.box(
-                    df_clean, 
-                    y=outlier_feature, 
-                    color='Outlier',
-                    color_discrete_map={"Normal": "#00B4D8"},
-                    title=f"Cleaned Boxplot for {outlier_feature} (Outliers Removed)"
-                )
-                fig_compare.update_layout(legend_title_text='Outlier')
-                st.plotly_chart(fig_compare, use_container_width=True)
                 
         else:
             st.success(f"✅ No outliers detected using {outlier_method}.")
