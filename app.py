@@ -16,17 +16,31 @@ st.set_page_config(page_title="Sports Analytics Hub", layout="wide", page_icon="
 @st.cache_resource
 def connect_database():
     load_dotenv()
-    target = os.getenv("DB_TARGET", "SQLITE")
     
+    # 1. Prepariamo SEMPRE il motore SQLite con il tuo percorso sicuro
     project_folder = os.path.dirname(os.path.abspath(__file__))
     clean_path = os.path.join(project_folder, "sports_analytics.db").replace("\\", "/")
     engine_sqlite = create_engine(f"sqlite:///{clean_path}")
     
-    if target == "POSTGRESQL":
-        db_password = os.getenv("DB_PASSWORD")
+    db_password = os.getenv("DB_PASSWORD")
+    
+    # 2. Tentativo automatico di connessione a PostgreSQL
+    try:
+        # Se la password non c'è, solleva un errore e passa direttamente a SQLite
+        if not db_password:
+            raise ValueError("Password mancante")
+            
         engine_pg = create_engine(f"postgresql://postgres:{db_password}@localhost:5432/sports_analytics")
-        return engine_pg, engine_sqlite 
-    else:
+        
+        # Facciamo un test REALE per vedere se il server (o la Meshnet) risponde
+        with engine_pg.connect() as conn:
+            pass # Se arriva qui, il server è acceso e raggiungibile!
+            
+        # Ritorna PostgreSQL come primario, e SQLite come backup
+        return engine_pg, engine_sqlite
+        
+    except Exception:
+        # 3. SE FALLISCE (sei sul portatile e non trova il PC fisso), usa SQLite locale
         return engine_sqlite, None
 
 engine_primary, engine_mirror = connect_database()
