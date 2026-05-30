@@ -12,24 +12,36 @@ def create_eda_profile(df, table_name):
     st.caption(f"Currently analyzing SQL Table: `{table_name}`")
     
     # ---------------------------------------------------------
-    # 1. HIGH-LEVEL METRICS & PREVIEW (COMPACT LAYOUT)
+    # 1. HIGH-LEVEL METRICS & PREVIEW
     # ---------------------------------------------------------
     col_title, col_rows, col_cols = st.columns([2, 1, 1])
     with col_title:
-        st.markdown("#### 📄 Data Preview")
+        st.markdown("#### 📄 Data Preview & Structure")
     with col_rows:
         st.metric("Total Rows", df.shape[0])
     with col_cols:
         st.metric("Total Columns", df.shape[1])
         
-    st.dataframe(df.head(50), use_container_width=True)
+    tab_data, tab_info = st.tabs(["Raw Data", "Column Data Types & Missing Values"])
+    
+    with tab_data:
+        st.dataframe(df.head(50), use_container_width=True)
+        
+    with tab_info:
+        info_df = pd.DataFrame({
+            'Data Type': df.dtypes.astype(str),
+            'Missing Values (NaN)': df.isnull().sum(),
+            '% Missing': (df.isnull().sum() / len(df) * 100).round(2).astype(str) + '%'
+        })
+        st.dataframe(info_df, use_container_width=True)
+        
     st.markdown("---")
     
     # ---------------------------------------------------------
     # 2. CATEGORICAL ENCODING & LEGEND
     # ---------------------------------------------------------
-    st.markdown("#### 🔠 Categorical Variables Encoding")
-    st.write("Machine Learning models require numerical inputs. Here is the encoded version of your text-based categorical variables.")
+    st.markdown("#### 🔠 Categorical Variables Encoding & Imputation")
+    st.write("Machine Learning models require numerical inputs without missing values. Select a categorical variable to view its encoding mapping and imputation strategy.")
     
     cat_cols = df.select_dtypes(include=['object', 'bool', 'category']).columns.tolist()
     
@@ -37,17 +49,46 @@ def create_eda_profile(df, table_name):
         df_encoded = df.copy()
         mapping_legend = {}
         
-        # Encoding categoricals and building the legend mapping
+        # --- SMART IMPUTATION & ENCODING LOOP ---
         for col in cat_cols:
-            le = LabelEncoder()
-            df_encoded[col] = le.fit_transform(df_encoded[col].astype(str))
-            # Create a dictionary pairing the original string with its new integer value
-            mapping_legend[col] = {str(class_label): int(encoded_val) for class_label, encoded_val in zip(le.classes_, le.transform(le.classes_))}
+            # 1. Smart Boolean Imputation: If a column contains True/False or 1/0 logic with NaNs
+            # We assume NaNs mean False (event didn't happen) and convert to 1/0.
+            unique_vals = [str(x).lower() for x in df[col].dropna().unique()]
+            if 'true' in unique_vals or 'false' in unique_vals:
+                # Fill blanks with False
+                df_encoded[col] = df_encoded[col].fillna(False)
+                # Ensure the column is boolean, then convert to integer (True=1, False=0)
+                # We use mapping to be perfectly safe against weird string formats like "True" vs True
+                df_encoded[col] = df_encoded[col].map({True: 1, False: 0, 'True': 1, 'False': 0, 1: 1, 0: 0, '1': 1, '0': 0}).fillna(0).astype(int)
+                
+                # Manually set the legend for these boolean columns
+                mapping_legend[col] = {"True": 1, "False": 0}
+                
+            else:
+                # 2. Standard Categorical Imputation: Fill blanks with 'Unknown'
+                df_encoded[col] = df_encoded[col].fillna("Unknown")
+                
+                # Standard Label Encoding
+                le = LabelEncoder()
+                df_encoded[col] = le.fit_transform(df_encoded[col].astype(str))
+                mapping_legend[col] = {str(class_label): int(encoded_val) for class_label, encoded_val in zip(le.classes_, le.transform(le.classes_))}
             
-        with st.expander("Show Encoded Categorical Dataset & Legend"):
-            st.write("**Encoding Legend (Mapping):**")
-            st.json(mapping_legend)
-            st.dataframe(df_encoded[cat_cols].head(100), use_container_width=True)
+        # --- INTERACTIVE VIEWER ---
+        selected_cat = st.selectbox("Select a categorical variable to inspect:", cat_cols)
+        
+        col_map, col_sample = st.columns(2)
+        with col_map:
+            st.write(f"**Encoding Map for `{selected_cat}`:**")
+            st.json(mapping_legend[selected_cat])
+            
+        with col_sample:
+            st.write("**Data Comparison (First 15 rows):**")
+            comparison_df = pd.DataFrame({
+                "Original (Raw)": df[selected_cat].astype(str).head(15),
+                "Encoded (Clean)": df_encoded[selected_cat].head(15)
+            })
+            st.dataframe(comparison_df, use_container_width=True)
+            
     else:
         st.info("No categorical variables found in this dataset.")
         df_encoded = df.copy()
@@ -63,34 +104,46 @@ def create_eda_profile(df, table_name):
     tab_dist, tab_group, tab_pair = st.tabs(["📊 Distribution & Counts", "🧮 Grouped Stats", "🔗 Pairplot (Scatter Matrix)"])
     
     # --- A. Distribution (Distplot) & Countplot ---
+    # --- A. Distribution (Distplot) & Countplot ---
     with tab_dist:
         st.write(f"**Distribution and Value Counts of `{target_col}`**")
+        
+        # 1. Detect if the selected variable is categorical using the official list
+        is_categorical = target_col in cat_cols
+        
+        # 2. Show notification and switch to encoded data if needed
+        if is_categorical:
+            st.info("ℹ️ Categorical variable detected. Displaying charts using its numerically encoded version.")
+            plot_df = df_encoded
+        else:
+            plot_df = df
+
         col_dist, col_count = st.columns(2)
         
         with col_dist:
             # Distribution Plot (Histogram)
             fig_dist = px.histogram(
-                df, 
+                plot_df, 
                 x=target_col, 
-                nbins=50,       
+                nbins=50 if not is_categorical else None, # Let Plotly handle bins naturally for categories
                 color_discrete_sequence=['#00B4D8'], 
-                title="Distribution Plot (Histogram)"
+                title="Distribution Plot"
             )
             
-            fig_dist.update_layout(
-                xaxis_type='linear',
-                bargap=0.05 
-            )
+            # Force linear axis ONLY for continuous numerical data
+            if not is_categorical:
+                fig_dist.update_layout(xaxis_type='linear')
+                
+            fig_dist.update_layout(bargap=0.05)
             fig_dist.update_traces(marker_line_width=0)
             st.plotly_chart(fig_dist, use_container_width=True)
             
         with col_count:
-            # Fix for continuous variables: Group decimals so the count plot doesn't flatten out
-            if pd.api.types.is_numeric_dtype(df[target_col]) and df[target_col].nunique() > 30:
-                # Round to 2 decimals to group highly continuous data effectively
-                counts = df[target_col].round(2).value_counts().reset_index()
+            # Group decimals for highly continuous numeric data, otherwise do standard counts
+            if pd.api.types.is_numeric_dtype(plot_df[target_col]) and plot_df[target_col].nunique() > 30 and not is_categorical:
+                counts = plot_df[target_col].round(2).value_counts().reset_index()
             else:
-                counts = df[target_col].value_counts().reset_index()
+                counts = plot_df[target_col].value_counts().reset_index()
                 
             counts.columns = [target_col, 'Count']
             
@@ -103,11 +156,11 @@ def create_eda_profile(df, table_name):
                 title="Count Plot (Frequency)"
             )
             
-            fig_count.update_layout(
-                xaxis_type='linear',
-                bargap=0.05
-            )
-            # Remove bar borders so the red blocks become thick and visible
+            # Force linear axis ONLY for continuous numerical data
+            if not is_categorical:
+                fig_count.update_layout(xaxis_type='linear')
+                
+            fig_count.update_layout(bargap=0.05)
             fig_count.update_traces(marker_line_width=0)
             
             st.plotly_chart(fig_count, use_container_width=True)
